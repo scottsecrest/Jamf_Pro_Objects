@@ -15,6 +15,9 @@ GET, CLEAN and POST Objects using the Jamf Pro API.
 ## Hidden Option:
 * CAUTION!!! Option 5) "DELETE" removes all XML objects from Jamf Pro.
 
+## Wiki:
+* https://github.com/scottsecrest/Jamf_Pro_Objects/wiki
+
 ## History
 
 #### v2.0
