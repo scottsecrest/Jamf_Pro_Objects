@@ -20,6 +20,11 @@ GET, CLEAN and POST Objects using the Jamf Pro API.
 
 ## History
 
+#### v2.1
+
+* Fixed quoting issues
+* Added logic to POST/DELETE functions
+
 #### v2.0
 
 * Updated Menu
