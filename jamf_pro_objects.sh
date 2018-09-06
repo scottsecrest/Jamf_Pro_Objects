@@ -34,11 +34,12 @@
 #
 # Version 1.0 - by Scott Secrest with contributions from Sam Fortuna, Brock Walters and Kyle Bareis
 # Version 2.0 - modified by Scott Secrest on 2/22/18 with contributions from Brock Walters
+# Version 2.1 - fixed quoting issues and added additional logic to POST/DELETE functions
 #
 #####################################################################################
 
 dunski(){
-read -p "Done. ${bold}Press RETURN to continue...${plain}"
+read -r -p "Done. ${bold}Press RETURN to continue...${plain}"
 }
 
 directory=$(dirname "$0")
@@ -69,7 +70,7 @@ jamfhealthcheck(){
 if /usr/bin/curl -ksS "$jamfURL"/healthCheck.html | /usr/bin/grep -q "\\[\\]"
 	then
 	    echo "Health Check: Passed"
-	    loginfo "[Info] $jamfURL Health Check: Passed"
+	    loginfo "$jamfURL Health Check: Passed"
 	else
 		echo "
 ${bold}Health Check: FAILED. ${plain}Confirm $jamfURL is avaliable. Exiting...
@@ -93,21 +94,21 @@ jamfconfig(){
 createfolders(){
 
 if [ ! -d "$directory/JSSResource" ]; then
-	echo "Creating folders to store XML Objects at: $directory/"
-	mkdir "$directory/JSSResource"
-	mkdir -p "$directory/objectID"
+	mkdir "$directory"/JSSResource
  	for object in "${objects[@]}" 
 	do
-		echo "$directory/$object"
-		mkdir -p "$directory/JSSResource/$object"
+		mkdir -p "$directory"/JSSResource/"$object"
 		clear
 	done
 fi
+if [ ! -d "$directory/objectID" ]; then
+	mkdir -p "$directory"/objectID
+fi
 }
 
-objectname(){
+object_id(){
 
-for file in $directory/objectID/*
+for file in "$directory"/objectID/*
 do
 	indxnum=($(/bin/cat "$file"))
 	if [ -z "$getyn" ]
@@ -159,12 +160,12 @@ echo "A list of database objects & record indexes is being generated..."
 
 for object in "${objects[@]}"
 do
-	/usr/bin/curl -ksS -H "Accept: application/xml" -u "$apiUser:$apiPass" "$jamfURL/JSSResource/$object" | /usr/bin/xmllint -xpath "//id" - 2>&1 | /usr/bin/sed 's/<[^>]*>/ /g' > "$directory/objectID/$object.xml"
+	/usr/bin/curl -ksS -H "Accept: application/xml" -u "$apiUser":"$apiPass" "$jamfURL"/JSSResource/"$object" | /usr/bin/xmllint -xpath "//id" - 2>&1 | /usr/bin/sed 's/<[^>]*>/ /g' > "$directory"/objectID/"$object".xml
 done
 
 echo "The database contains records for the following objects:
 "
-objectname
+object_id
 echo
 }
 
@@ -174,18 +175,18 @@ local total=0
 local successful=0
 local failures=0
 
-objectrecord=($(objectname))
+objectrecord=($(object_id))
 loginfo "$jamfURL contains records for the following objects:"
 
 for file in "${objectrecord[@]}"
 do
-	object=$(/usr/bin/basename $file .xml)
-	objectindex=($(/bin/cat "$directory/objectID/$file"))
-	loginfo "$file: ${objectindex[*]}"
+	object=$(/usr/bin/basename "$file" .xml)
+	objectindex=($(/bin/cat "$directory"/objectID/"$file"))
+	loginfo "$file": "${objectindex[*]}"
 	for id in "${objectindex[@]}"
 	do
-		/usr/bin/curl -ksS -H "Accept: application/xml" -u "$apiUser:$apiPass" "$jamfURL/JSSResource/$object/id/$id" | xmllint -format - > "$directory/JSSResource/$object/$id.xml"
-		result=$(head -c 5 "$directory/JSSResource/$object/$id.xml")
+		/usr/bin/curl -ksS -H "Accept: application/xml" -u "$apiUser":"$apiPass" "$jamfURL"/JSSResource/"$object"/id/"$id" | /usr/bin/xmllint -format - > "$directory"/JSSResource/"$object"/"$id".xml
+		result=$(head -c 5 "$directory"/JSSResource/"$object"/"$id".xml)
 		let total+=1
 		if [[ "$result" == "<?xml" ]]; then
 			echo "Success: $object/id/$id"
@@ -200,13 +201,12 @@ done
 echo "$successful out of $total objects were successfully captured and $failures failed"
 }
 
-clean()
-{
+clean(){
 
 loginfo "OPTION: CLEAN"
 
 if command -v python3 &>/dev/null; then
-    python3 $directory/clean_jamf_pro_objects.py $directory
+    python3 "$directory"/clean_jamf_pro_objects.py "$directory"
 	echo "The XML has been cleaned"
 else
     echo "Python 3 is not installed. Install Python3 and try again."
@@ -227,7 +227,7 @@ local total=0
 local successful=0
 local failures=0
 
-	if [ ! -d $directory/JSSResource/ ]; then
+	if [ ! -d "$directory"/JSSResource/ ]; then
 		echo "No folder at $directory/.
 Use menu option 1 to GET XML objects from Jamf Pro."
 		return
@@ -241,7 +241,7 @@ Use menu option 1 to GET XML objects from Jamf Pro."
 
 	while true
 	do
-		read -r -p "${bold}Continue?${plain} (yes / no)? " postyn
+		read -r -p "${bold}POST all XML objects from $directory/JSSResource/ to $jamfURL?${plain} (yes / no)? " postyn
 		case "$postyn" in
 		YES | Yes | Y | yes | y )	break			
 									;;
@@ -255,7 +255,7 @@ Use menu option 1 to GET XML objects from Jamf Pro."
 	done
 	fi
 
-	for file in $directory/JSSResource/*
+	for file in "$directory"/JSSResource/*
 	do
 		if /usr/bin/find "$file" -mindepth 1 | read -r
 		then
@@ -265,30 +265,41 @@ Use menu option 1 to GET XML objects from Jamf Pro."
 
 	for object in "${objects[@]}" 
 	do
-		for file in $directory/JSSResource/$object/*.xml
+		for file in "$directory"/JSSResource/"$object"/*.xml
 		do
+			if [[ "$file" != *"*.xml"* ]]; then
 			id=$(/usr/bin/basename "${file%.*}")
-			name=`/bin/cat $file | /usr/bin/xpath //computer/general/name - 2>&1 | /usr/bin/sed -e 's/\<name>//g; s/\<\/name>//g'`
-			statuscode=$(curl -w "%{http_code}\n" -sS -o "/dev/null" -k -X POST -H "Content-Type: application/xml" -u "$apiUser":"$apiPass" "$jamfURL/JSSResource/$object/id/0" -T "$file")
+			statuscode=$(curl -w "%{http_code}\n" -sS -o "/dev/null" -k -X POST -H "Content-Type: application/xml" -u "$apiUser":"$apiPass" "$jamfURL"/JSSResource/"$object"/id/0 -T "$file")
 			let total+=1
 				if [[ "$statuscode" == "409" ]]; then
-					echo "POST [Conflict]: Status Code = $statuscode File = /$object/id/$id.xml"
-					loginfo "POST: Status Code = $statuscode /$object/id/$id.xml"
-					statuscode=$(curl -w "%{http_code}\n" -sS -o "/dev/null" -k -X PUT -H "Content-Type: application/xml" -u "$apiUser":"$apiPass" "$jamfURL/JSSResource/$object/id/$name" -T "$file")
-					loginfo "PUT: Status Code = $statuscode /$object/id/$id.xml"
+					echo "	POST [Conflict]: Status Code = $statuscode File = /$object/id/$id.xml"
+					loginfo "	POST: Status Code = $statuscode /$object/id/$id.xml"
+					general=$(/bin/cat "$directory"/JSSResource/"$object"/"$id".xml | /usr/bin/xpath /*/general 2>/dev/null)
+					if [[ "$general" == "" ]]; then
+						name=$(/bin/cat "$directory"/JSSResource/"$object"/"$id".xml | /usr/bin/xpath /*/name[1] 2>/dev/null | /usr/bin/sed -e 's/\<name>//g; s/\<\/name>//g' | sed 's/ /%20/g')
+						statuscode=$(curl -w "%{http_code}\n" -sS -o "/dev/null" -k -X PUT -H "Content-Type: application/xml" -u "$apiUser":"$apiPass" "$jamfURL"/JSSResource/"$object"/name/"$name" -T "$file")
+						echo "	PUT: Status Code = $statuscode File = /$object/id/$id.xml /$object/name/$name"
+						loginfo "	PUT: Status Code = $statuscode /$object/id/$id.xml /$object/name/$name"
+					else
+						name=$(/bin/cat "$directory"/JSSResource/"$object"/"$id".xml | /usr/bin/xpath /*/*/name[1] 2>/dev/null | /usr/bin/sed -e 's/\<name>//g; s/\<\/name>//g' | sed 's/ /%20/g')
+						statuscode=$(curl -w "%{http_code}\n" -sS -o "/dev/null" -k -X PUT -H "Content-Type: application/xml" -u "$apiUser":"$apiPass" "$jamfURL"/JSSResource/"$object"/name/"$name" -T "$file")
+						echo "	PUT: Status Code = $statuscode File = /$object/id/$id.xml /$object/name/$name"
+						loginfo "	PUT: Status Code = $statuscode /$object/id/$id.xml /$object/name/$name"
+					fi
 				fi
 				if [[ "$statuscode" == "" ]]; then
-					echo "Failed: No object found"
+					echo "[Failed]: No object found"
 					logalert "POST/PUT [Failed]: Status Code = $statuscode /$object/id/$id.xml"
 					let failures+=1
 				elif [[ "$statuscode" == "200" ]] || [ "$statuscode" = "201" ]; then
-					echo "Post/Put [Success]: Status Code = $statuscode File = /$object/id/$id.xml"
+					echo "[Success]: Status Code = $statuscode File = /$object/id/$id.xml"
 					let successful+=1
 				else
-					echo "Failed: Status Code = $statuscode File = /$object/id/$id.xml"
-					logalert "POST/PUT [Failed]: Status Code = $statuscode /$object/id/$id.xml"
+					echo "[Failed]: Status Code = $statuscode File = /$object/id/$id.xml"
+					logalert "	POST/PUT [Failed]: Status Code = $statuscode /$object/id/$id.xml"
 					let failures+=1
 				fi
+			fi	
 		done
 	done
 	echo "$successful out of $total objects were successfully POST'ed and $failures failed"
@@ -308,8 +319,8 @@ local total=0
 local successful=0
 local failures=0
 
-if [ ! -d $directory/objectID ]; then
-	echo "No folder at $directory/objectID.
+if [ ! -d "$directory"/objectID ]; then
+	echo "No folder at "$directory"/objectID.
 Use menu option 1 to GET XML objects from Jamf Pro."
 fi
 
@@ -317,9 +328,7 @@ getid
 
 while true
 	do
-		read -r -p "${bold}CAUTION!!!${plain} Are you sure you want to ${bold}DELETE${plain} all objects from:
-$jamfURL${plain}
-(yes / no)? " deleteyn
+		read -r -p "${bold}CAUTION!!!${plain} Are you sure you want to ${bold}DELETE${plain} all objects from: $jamfURL${plain} (yes / no)? " deleteyn
 		case "$deleteyn" in
 		YES | Yes | Y | yes | y )	break			
 									;;
@@ -332,27 +341,27 @@ $jamfURL${plain}
 		esac
 	done
 
-objectrecord=($(objectname))
+objectrecord=($(object_id))
 loginfo "$directory/objectID/ contains records for the following objects:"
 
-for file in $directory/objectID/*
+for file in "$directory"/objectID/*
 do
 	objectdata=$(head -c 5 "$file")
 	if [[ "$objectdata" == "XPath" ]]; then
 		continue
 	else
-		object=$(/usr/bin/basename $file .xml)
-		objectindex=($(/bin/cat "$file"))
-		loginfo "$file: $objectindex[*]"
+		object=$(/usr/bin/basename "$file" .xml)
+		objectindex=($(< "$file"))
+		loginfo "$file: ${objectindex[*]}"
 		for id in "${objectindex[@]}"
 		do	
-			result=$(curl -sk -u "$apiUser:$apiPass" "$jamfURL/JSSResource/$object/id/$id" -X DELETE)
+			result=$(curl -sk -u "$apiUser":"$apiPass" "$jamfURL"/JSSResource/"$object"/id/"$id" -X DELETE)
 			let total+=1
 			if [[ "$result" == "<?xml version"* ]]; then
-				echo "Success: $object/id/$id"
+				echo "[Success]: $object/id/$id"
 				let successful+=1
 			else
-				echo "Failure: $object/id/$id"
+				echo "[Failure]: $object/id/$id"
 				loginfo "DELETE failed: /$object/id/$id.xml"
 				loginfo "Result = $result"
 				let failures+=1
@@ -382,13 +391,13 @@ echo "$logtimestamp  [INFO] $1" >> "$logfile"
 }
 logstop(){
 logalert "$logfile copied to jamf_pro_objects directory..."
-echo "$logtimestamp   [END] logging $(/usr/bin/basename "$0")..." >> "$logfile"
-/bin/mv -i "$logfile" $directory/"$(/usr/bin/basename "$logfile")"
+echo "$logtimestamp [END] logging $(/usr/bin/basename "$0")..." >> "$logfile"
+/bin/mv -i "$logfile" "$directory"/"$(/usr/bin/basename $logfile)"
 echo "Copying log file to $directory/
 Exiting..."
 }
 logstart(){
-logtimestamp=`date +%Y-%m-%d\ %H:%M:%S`
+logtimestamp="$(date +%Y-%m-%d\ %H:%M:%S)"
 echo "$logtimestamp [START] logging $(/usr/bin/basename "$0")..." >> "$logfile"
 }
 

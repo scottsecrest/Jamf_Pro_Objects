@@ -41,12 +41,15 @@ import xml.etree.cElementTree as ET
 import os
 import sys
 
-path = sys.argv[1]
-files = []
 rootelements = ["site", "category", "computers", "student_ids", "teacher_ids", "student_group_ids", "teacher_group_ids", "mobile_device_group_ids", "scope", "xprotect_version", "expiration_date_utc", "expiration_date_epoch"]
 subelements = ["site", "category", "remote_management", "xprotect_version", "self_service_categories", "self_service_icon"]
 modifyelements = ["name", "serial_number", "udid", "mac_address", "alt_mac_address", "wifi_mac_address", "bluetooth_mac_address"]
 modifysubelements = ["general"]
+
+######################################## DO NOT MODIFY BELOW THIS LINE ############################################
+
+path = sys.argv[1]
+files = []
 i = 1000
 
 def main():
